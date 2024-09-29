@@ -1,5 +1,5 @@
 <?php
-// AdminerLite - SQLite Database Manager
+// LiteAdminer - SQLite Database Manager
 global $selectedLang, $lang, $dbFile;
 
 // Configuration
@@ -58,7 +58,7 @@ if ($action === 'editRow') {
 
 $template = new Template();
 $template->render('layout', [
-    'title' => 'AdminerLite',
+    'title' => 'LiteAdminer',
     'tables' => $database->listTables(),
     'contentData' => $action === 'editRow' ? $formDataView->render() : $tableDataView->render(),
 ]);
@@ -414,7 +414,7 @@ class Template
     {
         $html = '<html>
         <head>
-        <title>AdminerLite</title>
+        <title>LiteAdminer</title>
         ' . $this->styles() . '
         </head>
         <body>
@@ -556,7 +556,7 @@ class Template
             'SQL' => '?action=sql',
         ];
         $html = '<div class="menu">
-        <h1>AdminerLite</h1>
+        <h1>LiteAdminer</h1>
         <ul>';
         foreach ($menu as $name => $link) {
             $html .= '<li><a href="' . urlLink($link) . '">' . $name . '</a></li>';
