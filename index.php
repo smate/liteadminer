@@ -2,9 +2,12 @@
 // LiteAdminer - SQLite Database Manager
 global $selectedLang, $lang, $dbFile;
 
+if (file_exists('.env')) {
+    $_ENV = parse_ini_file('.env');
+}
 // Configuration
-$dbFile = getenv('DB_FILE') ? getenv('DB_FILE') : 'database.sqlite';
-$selectedLang = getenv('LANG') ? getenv('LANG') : 'en';
+$dbFile = $_ENV['DB_FILE'] ?? 'database.sqlite';
+$selectedLang = $_ENV['LANG'] ?? 'en';
 
 if (!file_exists($dbFile)) {
     die('Database file not found');
@@ -37,7 +40,13 @@ $lang['en'] = [
 if ($action === 'editRow') {
     $tableSchema = $database->getTableSchema($_GET['table']);
     $columnsData = $tableSchema['data'];
-    $rowData = $database->getTableData($_GET['table'], 1, 1, [], [], []);
+    if (!empty($_POST)) {
+        $validColumns = array_column($columnsData, 'name');
+        $validatedData = array_filter($_POST, fn($key) => in_array($key, $validColumns), ARRAY_FILTER_USE_KEY);
+        $database->updateRow($_GET['table'], $validatedData, $_POST['pk'] ?? ['id' => $_POST['id']]);
+    }
+    $where = isset($_GET['id']) ? [['column' => 'id', 'condition' => '=', 'search' => $_GET['id']]] : [];
+    $rowData = $database->getTableData($_GET['table'], 1, 1, $where, [], []);
     $formDataView = new FormDataView($rowData['data'][0], $columnsData, $_GET['table']);
 } else {
     $tableData = match ($action) {
@@ -76,9 +85,7 @@ class FormDataView
     {
         $primaryKey = array_filter($this->columns, fn($column) => $column['pk'] == 1);
         $html = TableDataView::getTableHeader($this->tableName);
-        $html .= '<form class="editForm" method="post">';
-        $html .= '<input type="hidden" name="action" value="editRow">';
-        $html .= '<input type="hidden" name="table" value="' . $this->tableName . '">';
+        $html .= '<form class="editForm" method="post" action="?action=editRow&table=' . $this->tableName . '&id=' . $this->rowData['id'] . '">';
         foreach ($primaryKey as $name => $value) {
             $html .= $value['name'] . '<input type="text" name="pk[' . $value['name'] . ']" value="' . $this->rowData[$value['name']] . '">';
         }
@@ -263,7 +270,7 @@ class TableDataView
         $html .= '<h3>Query</h3>';
         $html .= '<form method="get">';
         $html .= '<input type="hidden" name="action" value="sql">';
-        $html .= '<textarea cols="100" rows="3" name="sql">' . $this->sql . '</textarea>';
+        $html .= '<textarea cols="100" rows="3" name="sql" class="sql">' . $this->sql . '</textarea>';
         $html .= '<button type="submit">' . __('Execute') . '</button>';
         $html .= '</form>';
         $html .= '</div>';
@@ -353,6 +360,15 @@ class Database
         return $this->processQuery($sql, $table, $page, $perPage);
     }
 
+    public function updateRow(string $table, array $data, array $where = []): mixed
+    {
+        $sql = "UPDATE $table SET " . implode(',', array_map(fn($key) => "$key = :$key", array_keys($data))) . " WHERE " . implode(' AND ', array_map(fn($key) => "$key = :$key", array_keys($where)));
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($data);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     public function getTableTotal(string $table): int
     {
         $stmt = $this->db->query("SELECT COUNT(*) FROM $table");
@@ -371,7 +387,6 @@ class Database
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
             echo $e->getMessage();
-            dd($sql);
         }
     }
 
@@ -473,6 +488,10 @@ class Template
         }
         .w-32 {
             width: 16rem;
+        }
+        .sql {
+            width: 100%;
+            height: 100px;
         }
         .container {
             display: flex;
