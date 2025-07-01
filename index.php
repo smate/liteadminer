@@ -362,11 +362,42 @@ class Database
 
     public function updateRow(string $table, array $data, array $where = []): mixed
     {
-        $sql = "UPDATE $table SET " . implode(',', array_map(fn($key) => "$key = :$key", array_keys($data))) . " WHERE " . implode(' AND ', array_map(fn($key) => "$key = :$key", array_keys($where)));
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($data);
-
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Separate parameters for SET and WHERE clauses
+        $setParams = [];
+        $whereParams = [];
+        
+        // Build SET clause with proper parameter binding
+        $setClauses = [];
+        foreach ($data as $key => $value) {
+            $paramName = "set_" . $key;
+            $setClauses[] = "`$key` = :$paramName";
+            $setParams[$paramName] = $value;
+        }
+        
+        // Build WHERE clause with proper parameter binding
+        $whereClauses = [];
+        foreach ($where as $key => $value) {
+            $paramName = "where_" . $key;
+            $whereClauses[] = "`$key` = :$paramName";
+            $whereParams[$paramName] = $value;
+        }
+        
+        // Combine all parameters
+        $allParams = array_merge($setParams, $whereParams);
+        
+        $sql = "UPDATE `$table` SET " . implode(', ', $setClauses);
+        if (!empty($whereClauses)) {
+            $sql .= " WHERE " . implode(' AND ', $whereClauses);
+        }
+        
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($allParams);
+            return $stmt->rowCount();
+        } catch (PDOException $e) {
+            echo "Update failed: " . $e->getMessage();
+            return false;
+        }
     }
 
     public function getTableTotal(string $table): int
