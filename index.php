@@ -343,30 +343,70 @@ class Database
     public function getTableData(string $table, int $page = 1, int $perPage = 1, array $where = [], array $select = [], array $sort = []): array
     {
         $offset = ($page - 1) * $perPage;
+        $params = [];
+        
         // Select
-        $sql = "SELECT " . (!empty($select[0]['column']) ? implode(',', array_column($select, 'column')) : '*') . " FROM $table ";
-        // Where
+        $sql = "SELECT " . (!empty($select[0]['column']) ? implode(',', array_column($select, 'column')) : '*') . " FROM `$table` ";
+        
+        // Where - Fix SQL injection vulnerability
         if (!empty($where[0]['column'])) {
-            foreach ($where as $condition) {
-                $sql .= " WHERE " . $condition['column'] . " " . $condition['condition'] . " '" . $condition['search'] . "'";
+            $whereClauses = [];
+            foreach ($where as $index => $condition) {
+                $paramName = "where_param_" . $index;
+                $whereClauses[] = "`" . $condition['column'] . "` " . $condition['condition'] . " :$paramName";
+                $params[$paramName] = $condition['search'];
             }
+            $sql .= " WHERE " . implode(' AND ', $whereClauses);
         }
-        // Sort
+        
+        // Sort - Add proper column escaping
         if (!empty($sort[0]['column'])) {
-            $sql .= " ORDER BY " . $sort[0]['column'] . " " . $sort[0]['direction'];
+            $sortDirection = in_array(strtoupper($sort[0]['direction']), ['ASC', 'DESC']) ? $sort[0]['direction'] : 'ASC';
+            $sql .= " ORDER BY `" . $sort[0]['column'] . "` " . $sortDirection;
         }
         $sql .= " LIMIT $perPage OFFSET $offset";
         
-        return $this->processQuery($sql, $table, $page, $perPage);
+        return $this->processQueryWithParams($sql, $params, $table, $page, $perPage);
     }
 
     public function updateRow(string $table, array $data, array $where = []): mixed
     {
-        $sql = "UPDATE $table SET " . implode(',', array_map(fn($key) => "$key = :$key", array_keys($data))) . " WHERE " . implode(' AND ', array_map(fn($key) => "$key = :$key", array_keys($where)));
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($data);
-
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        // Separate parameters for SET and WHERE clauses
+        $setParams = [];
+        $whereParams = [];
+        
+        // Build SET clause with proper parameter binding
+        $setClauses = [];
+        foreach ($data as $key => $value) {
+            $paramName = "set_" . $key;
+            $setClauses[] = "`$key` = :$paramName";
+            $setParams[$paramName] = $value;
+        }
+        
+        // Build WHERE clause with proper parameter binding
+        $whereClauses = [];
+        foreach ($where as $key => $value) {
+            $paramName = "where_" . $key;
+            $whereClauses[] = "`$key` = :$paramName";
+            $whereParams[$paramName] = $value;
+        }
+        
+        // Combine all parameters
+        $allParams = array_merge($setParams, $whereParams);
+        
+        $sql = "UPDATE `$table` SET " . implode(', ', $setClauses);
+        if (!empty($whereClauses)) {
+            $sql .= " WHERE " . implode(' AND ', $whereClauses);
+        }
+        
+        try {
+            $stmt = $this->db->prepare($sql);
+            $stmt->execute($allParams);
+            return $stmt->rowCount();
+        } catch (PDOException $e) {
+            echo "Update failed: " . $e->getMessage();
+            return false;
+        }
     }
 
     public function getTableTotal(string $table): int
@@ -375,7 +415,7 @@ class Database
         return (int) $stmt->fetchColumn(0);
     }
 
-    public function executeQuery(string $sql): array
+    public function executeQuery(string $sql, array $params = []): array
     {
         if (empty($sql)) {
             return [[]];
@@ -383,10 +423,11 @@ class Database
 
         try {
             $stmt = $this->db->prepare($sql);
-            $stmt->execute();
+            $stmt->execute($params);
             return $stmt->fetchAll(PDO::FETCH_ASSOC);
         } catch (PDOException $e) {
             echo $e->getMessage();
+            return [];
         }
     }
 
@@ -404,6 +445,22 @@ class Database
     public function processQuery(string $sql, ?string $table = null, ?int $page = null, ?int $perPage = null): array
     {
         $result = $this->executeQuery($sql);   
+        $response = [
+            'sql' => $sql,
+            'data' => $result,
+        ];
+        if ($table) {
+            $response['table'] = $table;
+            $response['total'] = $this->getTableTotal($table);
+            $response['page'] = $page;
+            $response['perPage'] = $perPage;
+        }
+        return $response;
+    }
+
+    public function processQueryWithParams(string $sql, array $params, ?string $table = null, ?int $page = null, ?int $perPage = null): array
+    {
+        $result = $this->executeQuery($sql, $params);   
         $response = [
             'sql' => $sql,
             'data' => $result,
